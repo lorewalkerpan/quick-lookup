@@ -34,6 +34,10 @@ python quick_translate.py
 
 三个模式都只读取本地词库，不会联网。
 
+### 主题
+
+`theme` 可选 `dark`、`light`、`ocean` 和 `forest`。主题定义保存在 `themes.json`，可以新增自己的预设。若只想微调某个颜色，请在 `theme_overrides` 中写入颜色值；它会覆盖当前主题而不影响其他颜色。
+
 ## 配置
 
 `quick_lookup_config.json`：
@@ -42,18 +46,16 @@ python quick_translate.py
 {
   "popup_position": "selection_right",
   "translation_mode": "smart",
-  "popup_background": "#202124",
-  "title_text_color": "#FFFFFF",
-  "translation_text_color": "#B9D4FF",
-  "definition_text_color": "#E8EAED",
-  "secondary_text_color": "#AEB4BC",
-  "muted_text_color": "#7F8792",
+  "theme": "ocean",
+  "theme_overrides": {
+    "translation_text_color": "#8BE9FD"
+  },
   "font_family": "Microsoft YaHei UI",
   "font_size": 11
 }
 ```
 
-颜色为 `#RRGGBB` 格式。可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family` 与 `font_size` 控制字体。
+颜色为 `#RRGGBB` 格式。`theme_overrides` 可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family` 与 `font_size` 控制字体。
 
 运行日志位于 `quick_translate.log`，不会记录你选中的原文。
 

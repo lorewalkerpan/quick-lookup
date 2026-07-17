@@ -34,20 +34,18 @@ CACHE_SIZE = 200
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = ROOT_DIR / "quick_lookup_config.json"
 LOCAL_DICTIONARY_FILE = ROOT_DIR / "offline_dictionary.json"
+THEMES_FILE = ROOT_DIR / "themes.json"
 LOG_FILE = ROOT_DIR / "quick_translate.log"
 
 DEFAULT_CONFIG = {
     "popup_position": "selection_right",
     "translation_mode": "smart",
-    "popup_background": "#202124",
-    "title_text_color": "#FFFFFF",
-    "translation_text_color": "#B9D4FF",
-    "definition_text_color": "#E8EAED",
-    "secondary_text_color": "#AEB4BC",
-    "muted_text_color": "#7F8792",
+    "theme": "dark",
+    "theme_overrides": {},
     "font_family": "Microsoft YaHei UI",
     "font_size": 11,
 }
+COLOR_KEYS = ("popup_background", "title_text_color", "translation_text_color", "definition_text_color", "secondary_text_color", "muted_text_color")
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -117,31 +115,54 @@ def log(message: str) -> None:
         pass
 
 
-def load_config() -> dict[str, str]:
-    config = DEFAULT_CONFIG.copy()
+def load_themes() -> dict[str, dict[str, str]]:
     try:
-        saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        if isinstance(saved, dict):
-            for key, value in saved.items():
-                if key in config and isinstance(value, type(config[key])):
-                    config[key] = value
+        themes = json.loads(THEMES_FILE.read_text(encoding="utf-8"))
+        if isinstance(themes, dict):
+            return {
+                name: values for name, values in themes.items()
+                if isinstance(name, str) and isinstance(values, dict)
+                and all(isinstance(values.get(key), str) and re.fullmatch(r"#[0-9a-fA-F]{6}", values[key]) for key in COLOR_KEYS)
+            }
+    except (OSError, json.JSONDecodeError) as error:
+        log(f"theme load failed: {type(error).__name__}")
+    return {}
+
+
+def load_config() -> dict[str, object]:
+    config = DEFAULT_CONFIG.copy()
+    themes = load_themes()
+    saved: dict[str, object] = {}
+    try:
+        loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            saved = loaded
     except (OSError, json.JSONDecodeError):
         pass
+    for key, value in saved.items():
+        if key in config and isinstance(value, type(config[key])):
+            config[key] = value
     if config["popup_position"] not in {"selection_right", "center"}:
         config["popup_position"] = DEFAULT_CONFIG["popup_position"]
     if config["translation_mode"] not in {"smart", "exact", "word_by_word"}:
         config["translation_mode"] = DEFAULT_CONFIG["translation_mode"]
-    for color_key in ("popup_background", "title_text_color", "translation_text_color", "definition_text_color", "secondary_text_color", "muted_text_color"):
-        if not re.fullmatch(r"#[0-9a-fA-F]{6}", config[color_key]):
-            config[color_key] = DEFAULT_CONFIG[color_key]
+    if config["theme"] not in themes:
+        config["theme"] = "dark" if "dark" in themes else next(iter(themes), "")
+    config.update(themes.get(config["theme"], {}))
+    overrides = config["theme_overrides"] if isinstance(config["theme_overrides"], dict) else {}
+    config["theme_overrides"] = overrides
+    for color_key, color_value in overrides.items():
+        if color_key in COLOR_KEYS and isinstance(color_value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", color_value):
+            config[color_key] = color_value
     if not 8 <= config["font_size"] <= 24:
         config["font_size"] = DEFAULT_CONFIG["font_size"]
     return config
 
 
-def save_config(config: dict[str, str]) -> None:
+def save_config(config: dict[str, object]) -> None:
     try:
-        CONFIG_FILE.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        persisted = {key: value for key, value in config.items() if key not in COLOR_KEYS}
+        CONFIG_FILE.write_text(json.dumps(persisted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except OSError as error:
         log(f"could not save config: {error}")
 

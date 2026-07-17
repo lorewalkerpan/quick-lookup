@@ -1,6 +1,6 @@
 {
   "popup_position": "selection_right",
-  "translation_mode": "smart",
+  "translation_mode": "api",
   "theme": "dark",
   "theme_overrides": {},
   "font_family": "Microsoft YaHei UI",

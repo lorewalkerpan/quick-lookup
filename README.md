@@ -1,6 +1,6 @@
 # Quick Lookup
 
-轻量 Windows 划词词典：划选英文后显示中文翻译；单词额外展示音标、词性、英文释义与例句。运行时完全不调用翻译或词典 API。
+轻量 Windows 划词词典：划选英文后显示中文翻译；单词额外展示音标、词性、英文释义与例句。默认使用在线 API，也可切换为完全离线模式。
 
 ## 使用
 
@@ -20,7 +20,7 @@ python quick_translate.py
 
 ## 离线词库
 
-所有翻译均来自项目内的 `offline_dictionary.json`，程序不会联网，也不需要 API 密钥。默认词库收录常用技术、界面与日常英语单词和短语；未收录内容会显示提示，而不会转而访问网络。
+离线模式的翻译来自项目内的 `offline_dictionary.json`，无需 API 密钥。默认词库收录常用技术、界面与日常英语单词和短语；未收录内容会显示提示。
 
 你可以直接编辑 `offline_dictionary.json` 来补充词条。每个词条可包含 `zh`、`ipa`、`part_of_speech`、`definitions` 和 `examples`。
 
@@ -28,11 +28,12 @@ python quick_translate.py
 
 在 `quick_lookup_config.json` 设置 `translation_mode`：
 
-- `smart`：优先匹配整个单词或短语；未收录的短语再逐词翻译（默认）。
+- `api`：在线翻译 + 在线词典释义（默认，需要网络）。
+- `smart`：优先匹配整个单词或短语；未收录的短语再逐词翻译（离线）。
 - `exact`：只匹配完整词条，未收录即提示。
 - `word_by_word`：短语始终按单词拆分翻译。
 
-三个模式都只读取本地词库，不会联网。
+`smart`、`exact` 和 `word_by_word` 只读取本地词库，不会联网。
 
 ### 主题
 
@@ -45,7 +46,7 @@ python quick_translate.py
 ```json
 {
   "popup_position": "selection_right",
-  "translation_mode": "smart",
+  "translation_mode": "api",
   "theme": "ocean",
   "theme_overrides": {
     "translation_text_color": "#8BE9FD"

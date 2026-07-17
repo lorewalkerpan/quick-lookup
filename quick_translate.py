@@ -18,6 +18,8 @@ import re
 import threading
 import time
 import tkinter as tk
+import urllib.parse
+import urllib.request
 
 from pynput import keyboard, mouse
 
@@ -39,7 +41,7 @@ LOG_FILE = ROOT_DIR / "quick_translate.log"
 
 DEFAULT_CONFIG = {
     "popup_position": "selection_right",
-    "translation_mode": "smart",
+    "translation_mode": "api",
     "theme": "dark",
     "theme_overrides": {},
     "font_family": "Microsoft YaHei UI",
@@ -144,7 +146,7 @@ def load_config() -> dict[str, object]:
             config[key] = value
     if config["popup_position"] not in {"selection_right", "center"}:
         config["popup_position"] = DEFAULT_CONFIG["popup_position"]
-    if config["translation_mode"] not in {"smart", "exact", "word_by_word"}:
+    if config["translation_mode"] not in {"api", "smart", "exact", "word_by_word"}:
         config["translation_mode"] = DEFAULT_CONFIG["translation_mode"]
     if config["theme"] not in themes:
         config["theme"] = "dark" if "dark" in themes else next(iter(themes), "")
@@ -216,6 +218,45 @@ def load_local_dictionary() -> dict[str, dict[str, object]]:
     except (OSError, json.JSONDecodeError) as error:
         log(f"local dictionary load failed: {type(error).__name__}")
     return {}
+
+
+def request_json(url: str) -> object:
+    request = urllib.request.Request(url, headers={"User-Agent": "QuickLookup/0.2"})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def api_translate_to_chinese(source: str) -> str:
+    query = urllib.parse.urlencode({"client": "gtx", "sl": "en", "tl": "zh-CN", "dt": "t", "q": source})
+    data = request_json("https://translate.googleapis.com/translate_a/single?" + query)
+    return "".join(part[0] for part in data[0] if part and part[0]).strip()  # type: ignore[index]
+
+
+def api_dictionary(word: str) -> tuple[str, str, list[str], list[str]]:
+    data = request_json("https://api.dictionaryapi.dev/api/v2/entries/en/" + urllib.parse.quote(word))
+    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
+        raise ValueError("unexpected dictionary response")
+    item = data[0]
+    ipa = item.get("phonetic", "") if isinstance(item.get("phonetic"), str) else ""
+    if not ipa:
+        for phonetic in item.get("phonetics", []):
+            if isinstance(phonetic, dict) and isinstance(phonetic.get("text"), str):
+                ipa = phonetic["text"]
+                break
+    part, definitions, examples = "", [], []
+    for meaning in item.get("meanings", [])[:2]:
+        if not isinstance(meaning, dict):
+            continue
+        if not part and isinstance(meaning.get("partOfSpeech"), str):
+            part = meaning["partOfSpeech"]
+        for definition in meaning.get("definitions", [])[:2]:
+            if not isinstance(definition, dict):
+                continue
+            if isinstance(definition.get("definition"), str):
+                definitions.append(definition["definition"])
+            if isinstance(definition.get("example"), str):
+                examples.append(definition["example"])
+    return ipa, part, definitions[:3], examples[:1]
 
 
 class QuickLookupApp:
@@ -339,7 +380,9 @@ class QuickLookupApp:
         normalized = source.lower().strip(".,;:!?()")
         raw = self.local_dictionary.get(normalized)
         mode = self.config["translation_mode"]
-        if raw and mode != "word_by_word":
+        if mode == "api":
+            entry = self.api_lookup(source, normalized, raw)
+        elif raw and mode != "word_by_word":
             entry = self.entry_from_raw(source, raw)
         elif raw and " " not in normalized:
             entry = self.entry_from_raw(source, raw)
@@ -356,6 +399,28 @@ class QuickLookupApp:
         if len(self.cache) > CACHE_SIZE:
             self.cache.popitem(last=False)
         return entry
+
+    def api_lookup(self, source: str, normalized: str, local_raw: dict[str, object] | None) -> DictionaryEntry:
+        """Default online mode; falls back to local data if a service is unavailable."""
+        try:
+            entry = DictionaryEntry(source, api_translate_to_chinese(source), provider="在线翻译 API")
+            if " " not in normalized and re.fullmatch(r"[A-Za-z'-]+", normalized):
+                try:
+                    entry.ipa, entry.part_of_speech, entry.definitions, entry.examples = api_dictionary(normalized)
+                    entry.provider = "在线翻译 API + 词典 API"
+                except Exception as error:
+                    log(f"online dictionary failed: {type(error).__name__}")
+                    entry.notice = "词典释义暂不可用"
+            return entry
+        except Exception as error:
+            log(f"online translation failed: {type(error).__name__}")
+            if local_raw:
+                fallback = self.entry_from_raw(source, local_raw)
+                fallback.notice = "在线服务不可用，已切换本地词库"
+                return fallback
+            fallback = self.not_found_entry(source)
+            fallback.notice = "在线服务不可用，且本地词库未收录"
+            return fallback
 
     @staticmethod
     def entry_from_raw(source: str, raw: dict[str, object]) -> DictionaryEntry:

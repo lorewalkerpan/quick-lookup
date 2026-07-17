@@ -14,6 +14,7 @@ python quick_translate.py
 - 拖选英文短语后松开鼠标：浮窗翻译。
 - 双击英文单词：翻译 + 词典释义。
 - `Ctrl + Alt + P`：在**划词右侧**和**屏幕居中**之间切换浮窗位置。
+- `Ctrl + Alt + S`：打开设置，可启用或关闭当前用户的开机启动。
 - `Ctrl + Alt + Q`：退出。
 
 程序会模拟 `Ctrl+C` 读取当前选择内容，因此仅适用于支持复制文字的应用。
@@ -52,11 +53,14 @@ python quick_translate.py
     "translation_text_color": "#8BE9FD"
   },
   "font_family": "Microsoft YaHei UI",
-  "font_size": 11
+  "font_size": 11,
+  "run_at_startup": false
 }
 ```
 
 颜色为 `#RRGGBB` 格式。`theme_overrides` 可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family` 与 `font_size` 控制字体。
+
+设置窗口保存的个人偏好写入 `quick_lookup_config.local.json`，不会提交到 GitHub。开机启动仅写入当前 Windows 用户的启动项，可随时在 `Ctrl + Alt + S` 中关闭。
 
 运行日志位于 `quick_translate.log`，不会记录你选中的原文。
 

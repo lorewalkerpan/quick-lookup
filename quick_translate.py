@@ -18,8 +18,11 @@ import re
 import threading
 import time
 import tkinter as tk
+from tkinter import messagebox
 import urllib.parse
 import urllib.request
+import sys
+import winreg
 
 from pynput import keyboard, mouse
 
@@ -35,6 +38,7 @@ MAX_TEXT_LENGTH = 180
 CACHE_SIZE = 200
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = ROOT_DIR / "quick_lookup_config.json"
+LOCAL_CONFIG_FILE = ROOT_DIR / "quick_lookup_config.local.json"
 LOCAL_DICTIONARY_FILE = ROOT_DIR / "offline_dictionary.json"
 THEMES_FILE = ROOT_DIR / "themes.json"
 LOG_FILE = ROOT_DIR / "quick_translate.log"
@@ -46,6 +50,7 @@ DEFAULT_CONFIG = {
     "theme_overrides": {},
     "font_family": "Microsoft YaHei UI",
     "font_size": 11,
+    "run_at_startup": False,
 }
 COLOR_KEYS = ("popup_background", "title_text_color", "translation_text_color", "definition_text_color", "secondary_text_color", "muted_text_color")
 
@@ -134,16 +139,15 @@ def load_themes() -> dict[str, dict[str, str]]:
 def load_config() -> dict[str, object]:
     config = DEFAULT_CONFIG.copy()
     themes = load_themes()
-    saved: dict[str, object] = {}
-    try:
-        loaded = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        if isinstance(loaded, dict):
-            saved = loaded
-    except (OSError, json.JSONDecodeError):
-        pass
-    for key, value in saved.items():
-        if key in config and isinstance(value, type(config[key])):
-            config[key] = value
+    for config_path in (CONFIG_FILE, LOCAL_CONFIG_FILE):
+        try:
+            saved = json.loads(config_path.read_text(encoding="utf-8"))
+            if isinstance(saved, dict):
+                for key, value in saved.items():
+                    if key in config and isinstance(value, type(config[key])):
+                        config[key] = value
+        except (OSError, json.JSONDecodeError):
+            pass
     if config["popup_position"] not in {"selection_right", "center"}:
         config["popup_position"] = DEFAULT_CONFIG["popup_position"]
     if config["translation_mode"] not in {"api", "smart", "exact", "word_by_word"}:
@@ -164,9 +168,40 @@ def load_config() -> dict[str, object]:
 def save_config(config: dict[str, object]) -> None:
     try:
         persisted = {key: value for key, value in config.items() if key not in COLOR_KEYS}
-        CONFIG_FILE.write_text(json.dumps(persisted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        LOCAL_CONFIG_FILE.write_text(json.dumps(persisted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except OSError as error:
         log(f"could not save config: {error}")
+
+
+def startup_command() -> str:
+    executable = Path(sys.executable).resolve()
+    if executable.name.lower() == "python.exe":
+        pythonw = executable.with_name("pythonw.exe")
+        if pythonw.exists():
+            executable = pythonw
+    return f'"{executable}" "{Path(__file__).resolve()}"'
+
+
+def set_run_at_startup(enabled: bool) -> None:
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE) as key:
+        if enabled:
+            winreg.SetValueEx(key, "QuickLookup", 0, winreg.REG_SZ, startup_command())
+        else:
+            try:
+                winreg.DeleteValue(key, "QuickLookup")
+            except FileNotFoundError:
+                pass
+
+
+def is_run_at_startup_enabled() -> bool:
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ) as key:
+            value, _ = winreg.QueryValueEx(key, "QuickLookup")
+        return isinstance(value, str) and bool(value)
+    except FileNotFoundError:
+        return False
 
 
 def clipboard_text() -> str | None:
@@ -274,6 +309,7 @@ class QuickLookupApp:
         self.pending: list[tuple[float, int, int, str]] = []
         self.cache: OrderedDict[str, DictionaryEntry] = OrderedDict()
         self.popup: tk.Toplevel | None = None
+        self.settings_window: tk.Toplevel | None = None
         self.hide_job: str | None = None
         self.mouse_down: tuple[int, int, float] | None = None
         self.last_left_down: tuple[int, int, float] | None = None
@@ -282,11 +318,17 @@ class QuickLookupApp:
         self.hotkeys = keyboard.GlobalHotKeys({
             "<ctrl>+<alt>+q": self.request_quit,
             "<ctrl>+<alt>+p": self.request_position_cycle,
+            "<ctrl>+<alt>+s": self.request_settings,
         })
         self.mouse_listener.start()
         self.hotkeys.start()
         self.root.after(20, self.process_queues)
         self.root.after(250, self.show_startup_notice)
+        if self.config["run_at_startup"]:
+            try:
+                set_run_at_startup(True)
+            except OSError as error:
+                log(f"startup registration failed: {error}")
         log("started: listeners and popup loop are active")
 
     def report_tk_error(self, exc_type, exc_value, _traceback) -> None:
@@ -313,6 +355,9 @@ class QuickLookupApp:
 
     def request_position_cycle(self) -> None:
         self.ui_queue.put(("cycle_position",))
+
+    def request_settings(self) -> None:
+        self.ui_queue.put(("settings",))
 
     def process_queues(self) -> None:
         now = time.monotonic()
@@ -344,6 +389,8 @@ class QuickLookupApp:
                     self.hide_job = self.root.after(int(POPUP_SECONDS * 1000), self.hide_popup)
             elif event[0] == "cycle_position":
                 self.cycle_position()
+            elif event[0] == "settings":
+                self.show_settings()
             elif event[0] == "quit":
                 self.quit()
                 return
@@ -465,7 +512,7 @@ class QuickLookupApp:
             self.add_label(frame, "例：" + example, self.config["secondary_text_color"], self.config["font_size"] - 2)
         if entry.notice:
             self.add_label(frame, entry.notice, self.config["secondary_text_color"], self.config["font_size"] - 2)
-        self.add_label(frame, f"{entry.provider} · Ctrl+Alt+P 切换位置", self.config["muted_text_color"], self.config["font_size"] - 3)
+        self.add_label(frame, f"{entry.provider} · Ctrl+Alt+P 位置 · Ctrl+Alt+S 设置", self.config["muted_text_color"], self.config["font_size"] - 3)
         popup.update_idletasks()
         width, height = popup.winfo_width(), popup.winfo_height()
         screen_width, screen_height = popup.winfo_screenwidth(), popup.winfo_screenheight()
@@ -496,12 +543,58 @@ class QuickLookupApp:
         self.show_popup(0, 0, DictionaryEntry("浮窗位置", position, provider="Quick Lookup"))
         self.hide_job = self.root.after(2500, self.hide_popup)
 
+    def show_settings(self) -> None:
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+        window = tk.Toplevel(self.root)
+        self.settings_window = window
+        window.title("Quick Lookup 设置")
+        window.attributes("-topmost", True)
+        window.configure(bg=self.config["popup_background"])
+        window.resizable(False, False)
+        frame = tk.Frame(window, bg=self.config["popup_background"], padx=20, pady=16)
+        frame.pack()
+        self.add_label(frame, "Quick Lookup 设置", self.config["title_text_color"], self.config["font_size"] + 1, "bold")
+        startup_enabled = tk.BooleanVar(value=is_run_at_startup_enabled())
+        tk.Checkbutton(
+            frame,
+            text="开机时自动启动 Quick Lookup",
+            variable=startup_enabled,
+            bg=self.config["popup_background"],
+            fg=self.config["definition_text_color"],
+            activebackground=self.config["popup_background"],
+            activeforeground=self.config["title_text_color"],
+            selectcolor=self.config["popup_background"],
+            font=(self.config["font_family"], self.config["font_size"]),
+        ).pack(anchor="w", pady=(10, 12))
+
+        def save_settings() -> None:
+            enabled = startup_enabled.get()
+            try:
+                set_run_at_startup(enabled)
+                self.config["run_at_startup"] = enabled
+                save_config(self.config)
+                messagebox.showinfo("Quick Lookup", "已启用开机启动" if enabled else "已关闭开机启动", parent=window)
+                window.destroy()
+            except OSError as error:
+                messagebox.showerror("Quick Lookup", f"无法更新开机启动设置：{error}", parent=window)
+
+        button = tk.Button(
+            frame, text="保存", command=save_settings,
+            bg=self.config["translation_text_color"], fg=self.config["popup_background"],
+            activebackground=self.config["title_text_color"], relief="flat", padx=16, pady=5,
+        )
+        button.pack(anchor="e")
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
     def show_startup_notice(self) -> None:
         class Point(ctypes.Structure):
             _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
         point = Point()
         user32.GetCursorPos(ctypes.byref(point))
-        self.show_popup(point.x, point.y, DictionaryEntry("Quick Lookup 已启动", "划选英语自动查询", provider="Ctrl+Alt+P 切换位置 · Ctrl+Alt+Q 退出"))
+        self.show_popup(point.x, point.y, DictionaryEntry("Quick Lookup 已启动", "划选英语自动查询", provider="Ctrl+Alt+P 位置 · Ctrl+Alt+S 设置 · Ctrl+Alt+Q 退出"))
         self.hide_job = self.root.after(2500, self.hide_popup)
 
     def quit(self) -> None:

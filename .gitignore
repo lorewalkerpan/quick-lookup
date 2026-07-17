@@ -2,4 +2,5 @@ __pycache__/
 *.py[cod]
 .venv/
 quick_translate.log
+quick_lookup_config.local.json
 tk_timer_test.log

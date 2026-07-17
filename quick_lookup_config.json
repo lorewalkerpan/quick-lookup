@@ -5,5 +5,6 @@
   "theme_overrides": {},
   "font_family": "Microsoft YaHei UI",
   "font_size": 11,
+  "speech_rate": 175,
   "run_at_startup": false
 }

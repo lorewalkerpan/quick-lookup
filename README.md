@@ -13,6 +13,7 @@ python quick_translate.py
 
 - 拖选英文短语后松开鼠标：浮窗翻译。
 - 双击英文单词：翻译 + 词典释义。
+- 浮窗中的 `🔊 朗读`：使用 Windows 本机语音朗读英文单词或短语，无需联网。
 - `Ctrl + Alt + P`：在**划词右侧**和**屏幕居中**之间切换浮窗位置。
 - `Ctrl + Alt + S`：打开统一设置入口，可调整浮窗位置、翻译模式、主题、字体、字号、文字/背景颜色和当前用户的开机启动。
 - `Ctrl + Alt + Q`：退出。
@@ -54,11 +55,12 @@ python quick_translate.py
   },
   "font_family": "Microsoft YaHei UI",
   "font_size": 11,
+  "speech_rate": 175,
   "run_at_startup": false
 }
 ```
 
-颜色为 `#RRGGBB` 格式。`theme_overrides` 可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family` 与 `font_size` 控制字体。
+颜色为 `#RRGGBB` 格式。`theme_overrides` 可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family`、`font_size` 与 `speech_rate` 分别控制字体、字号和朗读速度。朗读速度可在 `Ctrl + Alt + S` 的统一设置面板中调整。
 
 设置窗口保存的个人偏好写入 `quick_lookup_config.local.json`，不会提交到 GitHub。开机启动仅写入当前 Windows 用户的启动项，可随时在 `Ctrl + Alt + S` 中关闭。
 

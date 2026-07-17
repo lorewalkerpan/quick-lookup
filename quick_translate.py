@@ -26,8 +26,9 @@ import sys
 import winreg
 
 from pynput import keyboard, mouse
+import pyttsx3
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 POPUP_SECONDS = 7
 COPY_TIMEOUT_SECONDS = 0.7
@@ -53,6 +54,7 @@ DEFAULT_CONFIG = {
     "theme_overrides": {},
     "font_family": "Microsoft YaHei UI",
     "font_size": 11,
+    "speech_rate": 175,
     "run_at_startup": False,
 }
 COLOR_KEYS = ("popup_background", "title_text_color", "translation_text_color", "definition_text_color", "secondary_text_color", "muted_text_color")
@@ -116,6 +118,49 @@ class DictionaryEntry:
     notice: str = ""
 
 
+class SpeechService:
+    """A small background queue around Windows SAPI; no network request is made."""
+    def __init__(self, rate: int) -> None:
+        self.rate = rate
+        self.requests: queue.Queue[str | None] = queue.Queue()
+        self.worker = threading.Thread(target=self.run, name="quick-lookup-speech", daemon=True)
+        self.worker.start()
+
+    def speak(self, text: str) -> None:
+        text = text.strip()
+        if not text:
+            return
+        # Keep only the newest request when the button is clicked repeatedly.
+        while True:
+            try:
+                self.requests.get_nowait()
+            except queue.Empty:
+                break
+        self.requests.put(text)
+
+    def run(self) -> None:
+        try:
+            engine = pyttsx3.init("sapi5")
+            for voice in engine.getProperty("voices"):
+                voice_info = f"{getattr(voice, 'id', '')} {getattr(voice, 'name', '')}".lower()
+                if "english" in voice_info or "en-us" in voice_info or "en-gb" in voice_info:
+                    engine.setProperty("voice", voice.id)
+                    break
+            while True:
+                text = self.requests.get()
+                if text is None:
+                    engine.stop()
+                    return
+                engine.setProperty("rate", self.rate)
+                engine.say(text)
+                engine.runAndWait()
+        except Exception as error:
+            log(f"speech engine failed: {type(error).__name__}: {error}")
+
+    def stop(self) -> None:
+        self.requests.put(None)
+
+
 def log(message: str) -> None:
     """A small local diagnostic log; never write selected text to it."""
     try:
@@ -166,6 +211,8 @@ def load_config() -> dict[str, object]:
             config[color_key] = color_value
     if not 8 <= config["font_size"] <= 24:
         config["font_size"] = DEFAULT_CONFIG["font_size"]
+    if not 100 <= config["speech_rate"] <= 250:
+        config["speech_rate"] = DEFAULT_CONFIG["speech_rate"]
     return config
 
 
@@ -309,6 +356,7 @@ class QuickLookupApp:
         self.themes = load_themes()
         self.config = load_config()
         self.local_dictionary = load_local_dictionary()
+        self.speech = SpeechService(int(self.config["speech_rate"]))
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.report_callback_exception = self.report_tk_error
@@ -526,6 +574,12 @@ class QuickLookupApp:
             self.add_label(frame, "例：" + example, self.config["secondary_text_color"], self.config["font_size"] - 2)
         if entry.notice:
             self.add_label(frame, entry.notice, self.config["secondary_text_color"], self.config["font_size"] - 2)
+        tk.Button(
+            frame, text="🔊 朗读", command=lambda: self.speech.speak(entry.word),
+            bg=self.config["translation_text_color"], fg=self.config["popup_background"],
+            activebackground=self.config["title_text_color"], relief="flat", padx=11, pady=3,
+            font=(self.config["font_family"], max(8, self.config["font_size"] - 2)),
+        ).pack(anchor="w", pady=(2, 5))
         self.add_label(frame, f"{entry.provider} · Ctrl+Alt+P 位置 · Ctrl+Alt+S 设置", self.config["muted_text_color"], self.config["font_size"] - 3)
         popup.update_idletasks()
         width, height = popup.winfo_width(), popup.winfo_height()
@@ -629,6 +683,7 @@ class QuickLookupApp:
         theme_var = tk.StringVar(value=self.config["theme"])
         font_var = tk.StringVar(value=self.config["font_family"])
         font_size_var = tk.StringVar(value=str(self.config["font_size"]))
+        speech_rate_var = tk.StringVar(value=str(self.config["speech_rate"]))
         startup_var = tk.BooleanVar(value=is_run_at_startup_enabled())
         color_vars = {key: tk.StringVar(value=self.config[key]) for key in COLOR_KEYS}
 
@@ -654,23 +709,25 @@ class QuickLookupApp:
         font_control.grid(row=4, column=1, sticky="ew", pady=4)
         label(5, "字号")
         tk.Spinbox(frame, from_=8, to=24, textvariable=font_size_var, width=8).grid(row=5, column=1, sticky="w", pady=4)
+        label(6, "朗读速度")
+        tk.Spinbox(frame, from_=100, to=250, increment=5, textvariable=speech_rate_var, width=8).grid(row=6, column=1, sticky="w", pady=4)
 
         tk.Checkbutton(
             frame, text="开机时自动启动 Quick Lookup", variable=startup_var,
             bg=self.config["popup_background"], fg=self.config["definition_text_color"],
             activebackground=self.config["popup_background"], activeforeground=self.config["title_text_color"],
             selectcolor=self.config["popup_background"], font=(self.config["font_family"], self.config["font_size"]),
-        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 10))
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(8, 10))
 
         tk.Label(
             frame, text="颜色（#RRGGBB）", bg=self.config["popup_background"], fg=self.config["title_text_color"],
             font=(self.config["font_family"], self.config["font_size"], "bold"), anchor="w",
-        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 4))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(2, 4))
         color_labels = {
             "popup_background": "浮窗背景", "title_text_color": "标题文字", "translation_text_color": "译文文字",
             "definition_text_color": "释义文字", "secondary_text_color": "示例/提示", "muted_text_color": "页脚文字",
         }
-        for offset, key in enumerate(COLOR_KEYS, start=8):
+        for offset, key in enumerate(COLOR_KEYS, start=9):
             label(offset, color_labels[key])
             tk.Entry(frame, textvariable=color_vars[key], width=28).grid(row=offset, column=1, sticky="ew", pady=3)
 
@@ -690,6 +747,9 @@ class QuickLookupApp:
                 selected_size = int(font_size_var.get())
                 if not 8 <= selected_size <= 24:
                     raise ValueError("字号应在 8 到 24 之间")
+                selected_speech_rate = int(speech_rate_var.get())
+                if not 100 <= selected_speech_rate <= 250:
+                    raise ValueError("朗读速度应在 100 到 250 之间")
                 selected_colors = {key: color_vars[key].get().upper() for key in COLOR_KEYS}
                 if not all(re.fullmatch(r"#[0-9A-F]{6}", value) for value in selected_colors.values()):
                     raise ValueError("颜色必须是 #RRGGBB 格式")
@@ -697,10 +757,11 @@ class QuickLookupApp:
                 self.config.update({
                     "popup_position": position_var.get(), "translation_mode": mode_var.get(),
                     "theme": selected_theme, "font_family": font_var.get().strip() or "Microsoft YaHei UI",
-                    "font_size": selected_size, "run_at_startup": startup_var.get(),
+                    "font_size": selected_size, "speech_rate": selected_speech_rate, "run_at_startup": startup_var.get(),
                     "theme_overrides": {key: value for key, value in selected_colors.items() if value != theme_colors[key].upper()},
                 })
                 self.config.update(selected_colors)
+                self.speech.rate = selected_speech_rate
                 set_run_at_startup(startup_var.get())
                 save_config(self.config)
                 messagebox.showinfo("Quick Lookup", "设置已保存", parent=window)
@@ -709,7 +770,7 @@ class QuickLookupApp:
                 messagebox.showerror("Quick Lookup", f"无法保存设置：{error}", parent=window)
 
         buttons = tk.Frame(frame, bg=self.config["popup_background"])
-        buttons.grid(row=14, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        buttons.grid(row=15, column=0, columnspan=2, sticky="e", pady=(14, 0))
         tk.Button(buttons, text="取消", command=window.destroy, relief="flat", padx=14, pady=5).pack(side="right", padx=(8, 0))
         tk.Button(
             buttons, text="保存", command=save_settings, bg=self.config["translation_text_color"],
@@ -730,6 +791,7 @@ class QuickLookupApp:
         self.hide_popup()
         self.mouse_listener.stop()
         self.hotkeys.stop()
+        self.speech.stop()
         kernel32.CloseHandle(self.mutex)
         self.root.quit()
         log("stopped")

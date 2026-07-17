@@ -17,6 +17,7 @@ $arguments = @(
     '--add-data', "themes.json$separator.",
     '--add-data', "quick_lookup_config.json$separator.",
     '--collect-submodules', 'pynput',
+    '--collect-submodules', 'pyttsx3',
     'quick_translate.py'
 )
 

@@ -26,9 +26,10 @@ import sys
 import winreg
 
 from pynput import keyboard, mouse
-import pyttsx3
+import pythoncom
+from win32com.client import Dispatch
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 POPUP_SECONDS = 7
 COPY_TIMEOUT_SECONDS = 0.7
@@ -137,25 +138,33 @@ class SpeechService:
             except queue.Empty:
                 break
         self.requests.put(text)
+        log("speech queued")
 
     def run(self) -> None:
+        voice = None
         try:
-            engine = pyttsx3.init("sapi5")
-            for voice in engine.getProperty("voices"):
-                voice_info = f"{getattr(voice, 'id', '')} {getattr(voice, 'name', '')}".lower()
-                if "english" in voice_info or "en-us" in voice_info or "en-gb" in voice_info:
-                    engine.setProperty("voice", voice.id)
-                    break
+            pythoncom.CoInitialize()
+            voice = Dispatch("SAPI.SpVoice")
             while True:
                 text = self.requests.get()
                 if text is None:
-                    engine.stop()
                     return
-                engine.setProperty("rate", self.rate)
-                engine.say(text)
-                engine.runAndWait()
+                # SVSFlagsAsync (1) + SVSFPurgeBeforeSpeak (2): a new click
+                # immediately interrupts the previous utterance and starts over.
+                voice.Rate = max(-10, min(10, round((self.rate - 175) / 12.5)))
+                voice.Speak(text, 3)
         except Exception as error:
             log(f"speech engine failed: {type(error).__name__}: {error}")
+        finally:
+            if voice is not None:
+                try:
+                    voice.Speak("", 3)
+                except Exception:
+                    pass
+            try:
+                pythoncom.CoUninitialize()
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self.requests.put(None)

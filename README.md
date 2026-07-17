@@ -64,6 +64,18 @@ python quick_translate.py
 
 运行日志位于 `quick_translate.log`，不会记录你选中的原文。
 
+## 打包与发布
+
+本地构建 Windows 单文件程序：
+
+```powershell
+.\scripts\build_release.ps1
+```
+
+构建产物为 `dist\QuickLookup.exe`。打包版会把默认词库和主题内置；个人配置、日志和设置保存在 `%LOCALAPPDATA%\QuickLookup`，不会因升级而丢失。
+
+GitHub Actions 工作流位于 `.github/workflows/release.yml`：推送形如 `v0.3.0` 的标签会自动构建 `QuickLookup.exe`，创建对应的 GitHub Release 并上传该文件。也可以在 Actions 页面手动运行工作流并填写版本标签。
+
 ## 开源
 
 本项目采用 [MIT License](LICENSE)。欢迎提交 issue、词典提供方适配器、界面主题和多语言支持。

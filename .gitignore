@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
+*.egg-info/
 .venv/
+build/
+dist/
+*.spec
 quick_translate.log
 quick_lookup_config.local.json
 tk_timer_test.log

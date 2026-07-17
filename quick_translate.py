@@ -12,6 +12,7 @@ from ctypes import wintypes
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import json
+import os
 from pathlib import Path
 import queue
 import re
@@ -26,7 +27,7 @@ import winreg
 
 from pynput import keyboard, mouse
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 POPUP_SECONDS = 7
 COPY_TIMEOUT_SECONDS = 0.7
@@ -36,12 +37,14 @@ DOUBLE_CLICK_RADIUS = 20
 DRAG_SELECTION_DISTANCE = 5
 MAX_TEXT_LENGTH = 180
 CACHE_SIZE = 200
-ROOT_DIR = Path(__file__).resolve().parent
-CONFIG_FILE = ROOT_DIR / "quick_lookup_config.json"
-LOCAL_CONFIG_FILE = ROOT_DIR / "quick_lookup_config.local.json"
-LOCAL_DICTIONARY_FILE = ROOT_DIR / "offline_dictionary.json"
-THEMES_FILE = ROOT_DIR / "themes.json"
-LOG_FILE = ROOT_DIR / "quick_translate.log"
+SOURCE_DIR = Path(__file__).resolve().parent
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", SOURCE_DIR))
+USER_DATA_DIR = (Path(os.environ.get("LOCALAPPDATA", SOURCE_DIR)) / "QuickLookup") if getattr(sys, "frozen", False) else SOURCE_DIR
+CONFIG_FILE = RESOURCE_DIR / "quick_lookup_config.json"
+LOCAL_CONFIG_FILE = USER_DATA_DIR / "quick_lookup_config.local.json"
+LOCAL_DICTIONARY_FILE = RESOURCE_DIR / "offline_dictionary.json"
+THEMES_FILE = RESOURCE_DIR / "themes.json"
+LOG_FILE = USER_DATA_DIR / "quick_translate.log"
 
 DEFAULT_CONFIG = {
     "popup_position": "selection_right",
@@ -116,6 +119,7 @@ class DictionaryEntry:
 def log(message: str) -> None:
     """A small local diagnostic log; never write selected text to it."""
     try:
+        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
         with LOG_FILE.open("a", encoding="utf-8") as file:
             file.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}\n")
     except OSError:
@@ -167,6 +171,7 @@ def load_config() -> dict[str, object]:
 
 def save_config(config: dict[str, object]) -> None:
     try:
+        USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
         persisted = {key: value for key, value in config.items() if key not in COLOR_KEYS}
         LOCAL_CONFIG_FILE.write_text(json.dumps(persisted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except OSError as error:
@@ -174,6 +179,8 @@ def save_config(config: dict[str, object]) -> None:
 
 
 def startup_command() -> str:
+    if getattr(sys, "frozen", False):
+        return f'"{Path(sys.executable).resolve()}"'
     executable = Path(sys.executable).resolve()
     if executable.name.lower() == "python.exe":
         pythonw = executable.with_name("pythonw.exe")

@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+.venv/
+quick_translate.log
+tk_timer_test.log

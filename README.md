@@ -1,6 +1,6 @@
 # Quick Lookup
 
-轻量 Windows 划词词典：划选英文后显示中文翻译；单词额外展示音标、词性、英文释义与例句。
+轻量 Windows 划词词典：划选英文后显示中文翻译；单词额外展示音标、词性、英文释义与例句。运行时完全不调用翻译或词典 API。
 
 ## 使用
 
@@ -18,18 +18,11 @@ python quick_translate.py
 
 程序会模拟 `Ctrl+C` 读取当前选择内容，因此仅适用于支持复制文字的应用。
 
-## 词典提供方
+## 离线词库
 
-默认提供方为 [Free Dictionary API](https://dictionaryapi.dev/)，无需密钥。短语使用翻译服务；词典释义只在单词查询时展示。
+所有翻译均来自项目内的 `offline_dictionary.json`，程序不会联网，也不需要 API 密钥。默认词库收录常用技术、界面与日常英语单词和短语；未收录内容会显示提示，而不会转而访问网络。
 
-可选使用 Oxford Dictionaries API。它是需要凭据的官方服务，项目不会抓取 Oxford 网站内容。请在环境变量中设置自己的密钥：
-
-```powershell
-$env:OXFORD_APP_ID = "your-app-id"
-$env:OXFORD_APP_KEY = "your-app-key"
-```
-
-然后将 `quick_lookup_config.json` 的 `dictionary_provider` 改为 `"oxford"`。可选的 `language` 为 `en-gb` 或 `en-us`。
+你可以直接编辑 `offline_dictionary.json` 来补充词条。每个词条可包含 `zh`、`ipa`、`part_of_speech`、`definitions` 和 `examples`。
 
 ## 配置
 
@@ -37,9 +30,7 @@ $env:OXFORD_APP_KEY = "your-app-key"
 
 ```json
 {
-  "popup_position": "selection_right",
-  "dictionary_provider": "free",
-  "language": "en-gb"
+  "popup_position": "selection_right"
 }
 ```
 

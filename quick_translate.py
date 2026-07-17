@@ -12,15 +12,12 @@ from ctypes import wintypes
 from collections import OrderedDict
 from dataclasses import dataclass, field
 import json
-import os
 from pathlib import Path
 import queue
 import re
 import threading
 import time
 import tkinter as tk
-import urllib.parse
-import urllib.request
 
 from pynput import keyboard, mouse
 
@@ -36,13 +33,11 @@ MAX_TEXT_LENGTH = 180
 CACHE_SIZE = 200
 ROOT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = ROOT_DIR / "quick_lookup_config.json"
+LOCAL_DICTIONARY_FILE = ROOT_DIR / "offline_dictionary.json"
 LOG_FILE = ROOT_DIR / "quick_translate.log"
 
 DEFAULT_CONFIG = {
     "popup_position": "selection_right",
-    "dictionary_provider": "free",
-    "language": "en-gb",
-    "fixed_position": "center",
 }
 
 user32 = ctypes.windll.user32
@@ -123,8 +118,6 @@ def load_config() -> dict[str, str]:
         pass
     if config["popup_position"] not in {"selection_right", "center"}:
         config["popup_position"] = DEFAULT_CONFIG["popup_position"]
-    if config["dictionary_provider"] not in {"free", "oxford"}:
-        config["dictionary_provider"] = DEFAULT_CONFIG["dictionary_provider"]
     return config
 
 
@@ -175,91 +168,15 @@ def normalize_english(value: str) -> str | None:
     return None
 
 
-def request_json(url: str, headers: dict[str, str] | None = None) -> object:
-    request = urllib.request.Request(url, headers={"User-Agent": "QuickLookup/0.2", **(headers or {})})
-    with urllib.request.urlopen(request, timeout=5) as response:
-        return json.loads(response.read().decode("utf-8"))
-
-
-def translate_to_chinese(source: str) -> str:
-    query = urllib.parse.urlencode({"client": "gtx", "sl": "en", "tl": "zh-CN", "dt": "t", "q": source})
+def load_local_dictionary() -> dict[str, dict[str, object]]:
+    """Load the editable bundled dictionary. No network is ever used."""
     try:
-        data = request_json("https://translate.googleapis.com/translate_a/single?" + query)
-        return "".join(part[0] for part in data[0] if part and part[0]).strip()  # type: ignore[index]
-    except Exception as error:
-        log(f"translation request failed: {type(error).__name__}")
-        return "翻译服务暂不可用"
-
-
-def free_dictionary(word: str) -> tuple[str, str, list[str], list[str]]:
-    """Return IPA, part of speech, short definitions and examples from dictionaryapi.dev."""
-    data = request_json("https://api.dictionaryapi.dev/api/v2/entries/en/" + urllib.parse.quote(word))
-    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
-        raise ValueError("unexpected free dictionary response")
-    entry = data[0]
-    ipa = entry.get("phonetic", "") if isinstance(entry.get("phonetic"), str) else ""
-    if not ipa:
-        for phonetic in entry.get("phonetics", []):
-            if isinstance(phonetic, dict) and isinstance(phonetic.get("text"), str):
-                ipa = phonetic["text"]
-                break
-    part, definitions, examples = "", [], []
-    for meaning in entry.get("meanings", [])[:2]:
-        if not isinstance(meaning, dict):
-            continue
-        if not part and isinstance(meaning.get("partOfSpeech"), str):
-            part = meaning["partOfSpeech"]
-        for definition in meaning.get("definitions", [])[:2]:
-            if not isinstance(definition, dict):
-                continue
-            text = definition.get("definition")
-            if isinstance(text, str):
-                definitions.append(text)
-            example = definition.get("example")
-            if isinstance(example, str):
-                examples.append(example)
-    return ipa, part, definitions[:3], examples[:1]
-
-
-def oxford_dictionary(word: str, language: str) -> tuple[str, str, list[str], list[str]]:
-    """Read licensed Oxford API content when the user supplies their own credentials."""
-    app_id, app_key = os.getenv("OXFORD_APP_ID"), os.getenv("OXFORD_APP_KEY")
-    if not app_id or not app_key:
-        raise RuntimeError("未设置 OXFORD_APP_ID 和 OXFORD_APP_KEY")
-    base_url = os.getenv("OXFORD_API_BASE_URL", "https://od-api.oxforddictionaries.com/api/v2").rstrip("/")
-    query = urllib.parse.urlencode({"q": word, "fields": "definitions,pronunciations,examples"})
-    data = request_json(f"{base_url}/words/{language}?{query}", {"app_id": app_id, "app_key": app_key})
-    if not isinstance(data, dict):
-        raise ValueError("unexpected Oxford response")
-    ipa, part, definitions, examples = "", "", [], []
-    for result in data.get("results", [])[:1]:
-        if not isinstance(result, dict):
-            continue
-        for lexical in result.get("lexicalEntries", [])[:2]:
-            if not isinstance(lexical, dict):
-                continue
-            category = lexical.get("lexicalCategory", {})
-            if not part and isinstance(category, dict) and isinstance(category.get("text"), str):
-                part = category["text"]
-            for pronunciation in lexical.get("pronunciations", []):
-                if not ipa and isinstance(pronunciation, dict) and isinstance(pronunciation.get("phoneticSpelling"), str):
-                    ipa = pronunciation["phoneticSpelling"]
-            for entry in lexical.get("entries", [])[:1]:
-                if not isinstance(entry, dict):
-                    continue
-                for pronunciation in entry.get("pronunciations", []):
-                    if not ipa and isinstance(pronunciation, dict) and isinstance(pronunciation.get("phoneticSpelling"), str):
-                        ipa = pronunciation["phoneticSpelling"]
-                for sense in entry.get("senses", [])[:3]:
-                    if not isinstance(sense, dict):
-                        continue
-                    for definition in sense.get("definitions", [])[:2]:
-                        if isinstance(definition, str):
-                            definitions.append(definition)
-                    for example in sense.get("examples", [])[:1]:
-                        if isinstance(example, dict) and isinstance(example.get("text"), str):
-                            examples.append(example["text"])
-    return ipa, part, definitions[:3], examples[:1]
+        data = json.loads(LOCAL_DICTIONARY_FILE.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(key).lower(): value for key, value in data.items() if isinstance(value, dict)}
+    except (OSError, json.JSONDecodeError) as error:
+        log(f"local dictionary load failed: {type(error).__name__}")
+    return {}
 
 
 class QuickLookupApp:
@@ -268,6 +185,7 @@ class QuickLookupApp:
         if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
             raise RuntimeError("Quick Lookup 已在运行")
         self.config = load_config()
+        self.local_dictionary = load_local_dictionary()
         self.root = tk.Tk()
         self.root.withdraw()
         self.root.report_callback_exception = self.report_tk_error
@@ -375,27 +293,34 @@ class QuickLookupApp:
             log(f"{reason}: lookup error: {type(error).__name__}: {error}")
 
     def lookup(self, source: str) -> DictionaryEntry:
-        key = f"{self.config['dictionary_provider']}:{source.lower()}"
+        key = source.lower()
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
-        entry = DictionaryEntry(word=source, chinese=translate_to_chinese(source))
-        if " " not in source and re.fullmatch(r"[A-Za-z'-]+", source):
-            try:
-                if self.config["dictionary_provider"] == "oxford":
-                    ipa, part, definitions, examples = oxford_dictionary(source, self.config["language"])
-                    entry.provider = "Oxford Dictionaries API"
-                else:
-                    ipa, part, definitions, examples = free_dictionary(source)
-                    entry.provider = "Free Dictionary"
-                entry.ipa, entry.part_of_speech = ipa, part
-                entry.definitions, entry.examples = definitions, examples
-            except Exception as error:
-                entry.provider = "翻译"
-                entry.notice = "词典释义暂不可用"
-                log(f"dictionary lookup failed: {type(error).__name__}")
+        normalized = source.lower().strip(".,;:!?()")
+        raw = self.local_dictionary.get(normalized)
+        if raw:
+            entry = DictionaryEntry(
+                word=source,
+                chinese=str(raw.get("zh", "")),
+                ipa=str(raw.get("ipa", "")),
+                part_of_speech=str(raw.get("part_of_speech", "")),
+                definitions=[str(item) for item in raw.get("definitions", []) if isinstance(item, str)][:3],
+                examples=[str(item) for item in raw.get("examples", []) if isinstance(item, str)][:1],
+                provider="本地词库（离线）",
+            )
         else:
-            entry.provider = "短语翻译"
+            parts = [self.local_dictionary.get(part.lower()) for part in normalized.split()]
+            if len(parts) > 1 and all(parts):
+                chinese = " ".join(str(part.get("zh", "")) for part in parts if part)
+                entry = DictionaryEntry(source, chinese, provider="本地词库（逐词）")
+            else:
+                entry = DictionaryEntry(
+                    source,
+                    "本地词库未收录",
+                    provider="离线模式",
+                    notice="可在 offline_dictionary.json 添加这个单词或短语",
+                )
         self.cache[key] = entry
         if len(self.cache) > CACHE_SIZE:
             self.cache.popitem(last=False)

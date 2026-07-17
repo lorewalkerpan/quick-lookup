@@ -24,15 +24,36 @@ python quick_translate.py
 
 你可以直接编辑 `offline_dictionary.json` 来补充词条。每个词条可包含 `zh`、`ipa`、`part_of_speech`、`definitions` 和 `examples`。
 
+### 翻译模式
+
+在 `quick_lookup_config.json` 设置 `translation_mode`：
+
+- `smart`：优先匹配整个单词或短语；未收录的短语再逐词翻译（默认）。
+- `exact`：只匹配完整词条，未收录即提示。
+- `word_by_word`：短语始终按单词拆分翻译。
+
+三个模式都只读取本地词库，不会联网。
+
 ## 配置
 
 `quick_lookup_config.json`：
 
 ```json
 {
-  "popup_position": "selection_right"
+  "popup_position": "selection_right",
+  "translation_mode": "smart",
+  "popup_background": "#202124",
+  "title_text_color": "#FFFFFF",
+  "translation_text_color": "#B9D4FF",
+  "definition_text_color": "#E8EAED",
+  "secondary_text_color": "#AEB4BC",
+  "muted_text_color": "#7F8792",
+  "font_family": "Microsoft YaHei UI",
+  "font_size": 11
 }
 ```
+
+颜色为 `#RRGGBB` 格式。可分别调整浮窗背景、标题、译文、释义、示例/提示和页脚颜色；`font_family` 与 `font_size` 控制字体。
 
 运行日志位于 `quick_translate.log`，不会记录你选中的原文。
 

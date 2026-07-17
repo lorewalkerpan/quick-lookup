@@ -38,6 +38,15 @@ LOG_FILE = ROOT_DIR / "quick_translate.log"
 
 DEFAULT_CONFIG = {
     "popup_position": "selection_right",
+    "translation_mode": "smart",
+    "popup_background": "#202124",
+    "title_text_color": "#FFFFFF",
+    "translation_text_color": "#B9D4FF",
+    "definition_text_color": "#E8EAED",
+    "secondary_text_color": "#AEB4BC",
+    "muted_text_color": "#7F8792",
+    "font_family": "Microsoft YaHei UI",
+    "font_size": 11,
 }
 
 user32 = ctypes.windll.user32
@@ -113,11 +122,20 @@ def load_config() -> dict[str, str]:
     try:
         saved = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
         if isinstance(saved, dict):
-            config.update({key: value for key, value in saved.items() if key in config and isinstance(value, str)})
+            for key, value in saved.items():
+                if key in config and isinstance(value, type(config[key])):
+                    config[key] = value
     except (OSError, json.JSONDecodeError):
         pass
     if config["popup_position"] not in {"selection_right", "center"}:
         config["popup_position"] = DEFAULT_CONFIG["popup_position"]
+    if config["translation_mode"] not in {"smart", "exact", "word_by_word"}:
+        config["translation_mode"] = DEFAULT_CONFIG["translation_mode"]
+    for color_key in ("popup_background", "title_text_color", "translation_text_color", "definition_text_color", "secondary_text_color", "muted_text_color"):
+        if not re.fullmatch(r"#[0-9a-fA-F]{6}", config[color_key]):
+            config[color_key] = DEFAULT_CONFIG[color_key]
+    if not 8 <= config["font_size"] <= 24:
+        config["font_size"] = DEFAULT_CONFIG["font_size"]
     return config
 
 
@@ -293,38 +311,53 @@ class QuickLookupApp:
             log(f"{reason}: lookup error: {type(error).__name__}: {error}")
 
     def lookup(self, source: str) -> DictionaryEntry:
-        key = source.lower()
+        key = f"{self.config['translation_mode']}:{source.lower()}"
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
         normalized = source.lower().strip(".,;:!?()")
         raw = self.local_dictionary.get(normalized)
-        if raw:
-            entry = DictionaryEntry(
-                word=source,
-                chinese=str(raw.get("zh", "")),
-                ipa=str(raw.get("ipa", "")),
-                part_of_speech=str(raw.get("part_of_speech", "")),
-                definitions=[str(item) for item in raw.get("definitions", []) if isinstance(item, str)][:3],
-                examples=[str(item) for item in raw.get("examples", []) if isinstance(item, str)][:1],
-                provider="本地词库（离线）",
-            )
-        else:
+        mode = self.config["translation_mode"]
+        if raw and mode != "word_by_word":
+            entry = self.entry_from_raw(source, raw)
+        elif raw and " " not in normalized:
+            entry = self.entry_from_raw(source, raw)
+        elif mode in {"smart", "word_by_word"}:
             parts = [self.local_dictionary.get(part.lower()) for part in normalized.split()]
             if len(parts) > 1 and all(parts):
                 chinese = " ".join(str(part.get("zh", "")) for part in parts if part)
                 entry = DictionaryEntry(source, chinese, provider="本地词库（逐词）")
             else:
-                entry = DictionaryEntry(
-                    source,
-                    "本地词库未收录",
-                    provider="离线模式",
-                    notice="可在 offline_dictionary.json 添加这个单词或短语",
-                )
+                entry = self.not_found_entry(source)
+        else:
+            entry = self.not_found_entry(source)
         self.cache[key] = entry
         if len(self.cache) > CACHE_SIZE:
             self.cache.popitem(last=False)
         return entry
+
+    @staticmethod
+    def entry_from_raw(source: str, raw: dict[str, object]) -> DictionaryEntry:
+        definitions = raw.get("definitions", [])
+        examples = raw.get("examples", [])
+        return DictionaryEntry(
+            word=source,
+            chinese=str(raw.get("zh", "")),
+            ipa=str(raw.get("ipa", "")),
+            part_of_speech=str(raw.get("part_of_speech", "")),
+            definitions=[str(item) for item in definitions if isinstance(item, str)][:3] if isinstance(definitions, list) else [],
+            examples=[str(item) for item in examples if isinstance(item, str)][:1] if isinstance(examples, list) else [],
+            provider="本地词库（离线）",
+        )
+
+    @staticmethod
+    def not_found_entry(source: str) -> DictionaryEntry:
+        return DictionaryEntry(
+            source,
+            "本地词库未收录",
+            provider="离线模式",
+            notice="可在 offline_dictionary.json 添加这个单词或短语",
+        )
 
     def show_popup(self, x: int, y: int, entry: DictionaryEntry) -> None:
         self.hide_popup()
@@ -332,21 +365,21 @@ class QuickLookupApp:
         self.popup = popup
         popup.overrideredirect(True)
         popup.attributes("-topmost", True)
-        popup.configure(bg="#202124")
-        frame = tk.Frame(popup, bg="#202124", padx=14, pady=11)
+        popup.configure(bg=self.config["popup_background"])
+        frame = tk.Frame(popup, bg=self.config["popup_background"], padx=14, pady=11)
         frame.pack()
         title = entry.word + (f"   /{entry.ipa}/" if entry.ipa else "")
-        self.add_label(frame, title, "#ffffff", 12, "bold")
+        self.add_label(frame, title, self.config["title_text_color"], self.config["font_size"] + 1, "bold")
         if entry.part_of_speech:
-            self.add_label(frame, entry.part_of_speech, "#a9c7ff", 9)
-        self.add_label(frame, entry.chinese, "#b9d4ff", 11)
+            self.add_label(frame, entry.part_of_speech, self.config["translation_text_color"], self.config["font_size"] - 2)
+        self.add_label(frame, entry.chinese, self.config["translation_text_color"], self.config["font_size"])
         for definition in entry.definitions[:3]:
-            self.add_label(frame, "• " + definition, "#e8eaed", 10)
+            self.add_label(frame, "• " + definition, self.config["definition_text_color"], self.config["font_size"] - 1)
         for example in entry.examples[:1]:
-            self.add_label(frame, "例：" + example, "#aeb4bc", 9)
+            self.add_label(frame, "例：" + example, self.config["secondary_text_color"], self.config["font_size"] - 2)
         if entry.notice:
-            self.add_label(frame, entry.notice, "#ffcf70", 9)
-        self.add_label(frame, f"{entry.provider} · Ctrl+Alt+P 切换位置", "#7f8792", 8)
+            self.add_label(frame, entry.notice, self.config["secondary_text_color"], self.config["font_size"] - 2)
+        self.add_label(frame, f"{entry.provider} · Ctrl+Alt+P 切换位置", self.config["muted_text_color"], self.config["font_size"] - 3)
         popup.update_idletasks()
         width, height = popup.winfo_width(), popup.winfo_height()
         screen_width, screen_height = popup.winfo_screenwidth(), popup.winfo_screenheight()
@@ -358,9 +391,8 @@ class QuickLookupApp:
         popup.geometry(f"+{left}+{top}")
         popup.lift()
 
-    @staticmethod
-    def add_label(parent: tk.Widget, text: str, color: str, size: int, weight: str = "normal") -> None:
-        tk.Label(parent, text=text, bg="#202124", fg=color, font=("Microsoft YaHei UI", size, weight),
+    def add_label(self, parent: tk.Widget, text: str, color: str, size: int, weight: str = "normal") -> None:
+        tk.Label(parent, text=text, bg=self.config["popup_background"], fg=color, font=(self.config["font_family"], max(8, size), weight),
                  justify="left", anchor="w", wraplength=430).pack(anchor="w", pady=(0, 3))
 
     def hide_popup(self) -> None:

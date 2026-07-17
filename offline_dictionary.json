@@ -19,6 +19,8 @@
   "function": {"zh": "功能；函数", "ipa": "ˈfʌŋkʃən", "part_of_speech": "noun", "definitions": ["a purpose, task, or mathematical relationship"]},
   "feature": {"zh": "功能；特性", "ipa": "ˈfiːtʃə", "part_of_speech": "noun", "definitions": ["an important or interesting part of something"]},
   "project": {"zh": "项目", "ipa": "ˈprɒdʒekt", "part_of_speech": "noun", "definitions": ["a planned piece of work"]},
+  "open": {"zh": "开放；打开", "ipa": "ˈəʊpən", "part_of_speech": "verb / adjective", "definitions": ["allow access to; not closed"]},
+  "source": {"zh": "来源；源代码", "ipa": "sɔːs", "part_of_speech": "noun", "definitions": ["the origin of something; program code"]},
   "open source": {"zh": "开源", "part_of_speech": "phrase", "definitions": ["software whose source code is available to inspect and modify"]},
   "quick lookup": {"zh": "快速查询", "part_of_speech": "phrase"},
   "computer": {"zh": "计算机；电脑", "ipa": "kəmˈpjuːtə", "part_of_speech": "noun", "definitions": ["an electronic device for processing data"]},

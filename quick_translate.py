@@ -27,7 +27,7 @@ import winreg
 
 from pynput import keyboard, mouse
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 POPUP_SECONDS = 7
 COPY_TIMEOUT_SECONDS = 0.7
@@ -417,6 +417,12 @@ class QuickLookupApp:
             deadline = time.monotonic() + COPY_TIMEOUT_SECONDS
             while time.monotonic() < deadline and user32.GetClipboardSequenceNumber() == previous_clipboard:
                 time.sleep(0.02)
+            # Never reuse a prior clipboard value.  If Ctrl+C did not produce a
+            # new clipboard sequence, the foreground drag/click was not a text
+            # selection and showing the old translation would be misleading.
+            if user32.GetClipboardSequenceNumber() == previous_clipboard:
+                log(f"{reason}: ignored because no fresh text was copied")
+                return
             source = normalize_english(clipboard_text() or "")
             if not source:
                 return

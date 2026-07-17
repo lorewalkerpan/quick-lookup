@@ -18,7 +18,7 @@ import re
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import urllib.parse
 import urllib.request
 import sys
@@ -299,6 +299,7 @@ class QuickLookupApp:
         self.mutex = kernel32.CreateMutexW(None, False, "Local\\QuickLookupSelectionPopup")
         if kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
             raise RuntimeError("Quick Lookup 已在运行")
+        self.themes = load_themes()
         self.config = load_config()
         self.local_dictionary = load_local_dictionary()
         self.root = tk.Tk()
@@ -543,7 +544,7 @@ class QuickLookupApp:
         self.show_popup(0, 0, DictionaryEntry("浮窗位置", position, provider="Quick Lookup"))
         self.hide_job = self.root.after(2500, self.hide_popup)
 
-    def show_settings(self) -> None:
+    def show_startup_settings_legacy(self) -> None:
         if self.settings_window and self.settings_window.winfo_exists():
             self.settings_window.lift()
             self.settings_window.focus_force()
@@ -587,6 +588,120 @@ class QuickLookupApp:
             activebackground=self.config["title_text_color"], relief="flat", padx=16, pady=5,
         )
         button.pack(anchor="e")
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+
+    def show_settings(self) -> None:
+        if self.settings_window and self.settings_window.winfo_exists():
+            self.settings_window.lift()
+            self.settings_window.focus_force()
+            return
+
+        window = tk.Toplevel(self.root)
+        self.settings_window = window
+        window.title("Quick Lookup 设置")
+        window.attributes("-topmost", True)
+        window.configure(bg=self.config["popup_background"])
+        window.resizable(False, False)
+        frame = tk.Frame(window, bg=self.config["popup_background"], padx=20, pady=16)
+        frame.pack()
+
+        title = tk.Label(
+            frame, text="Quick Lookup 设置", bg=self.config["popup_background"], fg=self.config["title_text_color"],
+            font=(self.config["font_family"], self.config["font_size"] + 2, "bold"), anchor="w",
+        )
+        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+
+        position_var = tk.StringVar(value=self.config["popup_position"])
+        mode_var = tk.StringVar(value=self.config["translation_mode"])
+        theme_var = tk.StringVar(value=self.config["theme"])
+        font_var = tk.StringVar(value=self.config["font_family"])
+        font_size_var = tk.StringVar(value=str(self.config["font_size"]))
+        startup_var = tk.BooleanVar(value=is_run_at_startup_enabled())
+        color_vars = {key: tk.StringVar(value=self.config[key]) for key in COLOR_KEYS}
+
+        def label(row: int, text: str) -> None:
+            tk.Label(
+                frame, text=text, bg=self.config["popup_background"], fg=self.config["definition_text_color"],
+                font=(self.config["font_family"], self.config["font_size"]), anchor="w",
+            ).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=4)
+
+        def combo(row: int, variable: tk.StringVar, values: tuple[str, ...]) -> ttk.Combobox:
+            control = ttk.Combobox(frame, textvariable=variable, values=values, state="readonly", width=25)
+            control.grid(row=row, column=1, sticky="ew", pady=4)
+            return control
+
+        label(1, "浮窗位置")
+        combo(1, position_var, ("selection_right", "center"))
+        label(2, "翻译模式")
+        combo(2, mode_var, ("api", "smart", "exact", "word_by_word"))
+        label(3, "主题")
+        theme_control = combo(3, theme_var, tuple(self.themes) or ("dark",))
+        label(4, "字体")
+        font_control = ttk.Combobox(frame, textvariable=font_var, values=("Microsoft YaHei UI", "Segoe UI", "Consolas", "Arial"), width=25)
+        font_control.grid(row=4, column=1, sticky="ew", pady=4)
+        label(5, "字号")
+        tk.Spinbox(frame, from_=8, to=24, textvariable=font_size_var, width=8).grid(row=5, column=1, sticky="w", pady=4)
+
+        tk.Checkbutton(
+            frame, text="开机时自动启动 Quick Lookup", variable=startup_var,
+            bg=self.config["popup_background"], fg=self.config["definition_text_color"],
+            activebackground=self.config["popup_background"], activeforeground=self.config["title_text_color"],
+            selectcolor=self.config["popup_background"], font=(self.config["font_family"], self.config["font_size"]),
+        ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 10))
+
+        tk.Label(
+            frame, text="颜色（#RRGGBB）", bg=self.config["popup_background"], fg=self.config["title_text_color"],
+            font=(self.config["font_family"], self.config["font_size"], "bold"), anchor="w",
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(2, 4))
+        color_labels = {
+            "popup_background": "浮窗背景", "title_text_color": "标题文字", "translation_text_color": "译文文字",
+            "definition_text_color": "释义文字", "secondary_text_color": "示例/提示", "muted_text_color": "页脚文字",
+        }
+        for offset, key in enumerate(COLOR_KEYS, start=8):
+            label(offset, color_labels[key])
+            tk.Entry(frame, textvariable=color_vars[key], width=28).grid(row=offset, column=1, sticky="ew", pady=3)
+
+        def apply_theme(_event: object = None) -> None:
+            selected = self.themes.get(theme_var.get())
+            if selected:
+                for key in COLOR_KEYS:
+                    color_vars[key].set(selected[key])
+
+        theme_control.bind("<<ComboboxSelected>>", apply_theme)
+
+        def save_settings() -> None:
+            try:
+                selected_theme = theme_var.get()
+                if selected_theme not in self.themes:
+                    raise ValueError("请选择有效主题")
+                selected_size = int(font_size_var.get())
+                if not 8 <= selected_size <= 24:
+                    raise ValueError("字号应在 8 到 24 之间")
+                selected_colors = {key: color_vars[key].get().upper() for key in COLOR_KEYS}
+                if not all(re.fullmatch(r"#[0-9A-F]{6}", value) for value in selected_colors.values()):
+                    raise ValueError("颜色必须是 #RRGGBB 格式")
+                theme_colors = self.themes[selected_theme]
+                self.config.update({
+                    "popup_position": position_var.get(), "translation_mode": mode_var.get(),
+                    "theme": selected_theme, "font_family": font_var.get().strip() or "Microsoft YaHei UI",
+                    "font_size": selected_size, "run_at_startup": startup_var.get(),
+                    "theme_overrides": {key: value for key, value in selected_colors.items() if value != theme_colors[key].upper()},
+                })
+                self.config.update(selected_colors)
+                set_run_at_startup(startup_var.get())
+                save_config(self.config)
+                messagebox.showinfo("Quick Lookup", "设置已保存", parent=window)
+                window.destroy()
+            except (OSError, ValueError) as error:
+                messagebox.showerror("Quick Lookup", f"无法保存设置：{error}", parent=window)
+
+        buttons = tk.Frame(frame, bg=self.config["popup_background"])
+        buttons.grid(row=14, column=0, columnspan=2, sticky="e", pady=(14, 0))
+        tk.Button(buttons, text="取消", command=window.destroy, relief="flat", padx=14, pady=5).pack(side="right", padx=(8, 0))
+        tk.Button(
+            buttons, text="保存", command=save_settings, bg=self.config["translation_text_color"],
+            fg=self.config["popup_background"], activebackground=self.config["title_text_color"], relief="flat", padx=16, pady=5,
+        ).pack(side="right")
         window.protocol("WM_DELETE_WINDOW", window.destroy)
 
     def show_startup_notice(self) -> None:
